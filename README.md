@@ -44,6 +44,15 @@ aos [your-process-name]
 APM.install("membuddy")
 ```
 
+
+## Example Output
+
+The simplest way to use `membuddy` is to call `membuddy.print()`. This will
+print a report of the memory usage of the entire current AOS environment to the
+console. You should see output similar to the following:
+
+<image src="https://raw.githubusercontent.com/samcamwilliams/membuddy/refs/heads/main/example-output.png" alt="Example Output" />
+
 ## Usage
 
 There are two main ways to use `membuddy`:
@@ -101,12 +110,6 @@ local results = membuddy.profile({
 -- Print results from previous profiling runs:
 membuddy.print(results)
 ```
-
-## Example Output
-
-When calling `membuddy.print()`, you will see a report of the following form:
-
-<image src="https://raw.githubusercontent.com/samcamwilliams/membuddy/refs/heads/main/example-output.png" alt="Example Output" />
 
 ## Additional Printing Options
 
