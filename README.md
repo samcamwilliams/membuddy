@@ -105,44 +105,8 @@ membuddy.print(results)
 ## Example Output
 
 When calling `membuddy.print()`, you will see a report of the following form:
-```lua
-   ===================== MEMBUDDY =====================
 
-Analyzed a total of 206 references.
-Total memory utilized: 22.78 KB.
-
-Memory usage by reference name:
-    package → 16.66 KB
-    package/loaded → 16.24 KB
-    Inbox → 4.49 KB
-    Inbox/1 → 4.43 KB
-    Inbox/1/TagArray/... → 3.27 KB
-    package/loaded/.crypto.init/... → 3.11 KB
-    package/loaded/.handlers/... → 2.67 KB
-    package/loaded/.crypto.cipher.init/... → 2.62 KB
-    package/loaded/.crypto.util.init/... → 2.62 KB
-    package/loaded/.ao/... → 2.61 KB
-    A → 490 bytes
-    Inbox/1/Tags/... → 328 bytes
-    A/D → 322 bytes
-    package/path → 175 bytes
-    package/loaded/io/... → 155 bytes
-    A/D/B → 154 bytes
-    t → 112 bytes
-    package/cpath → 93 bytes
-    Inbox/1/Module → 68 bytes
-    Inbox/1/Authority → 68 bytes
-...and 81 other references, totalling 4.49 KB.
-
-Found circular references (potentially retaining data unnecessarily):
-    _G: self-reference (22.83 KB)
-    package/loaded/_G: self-reference (22.83 KB)
-    package/loaded/package → package (16.66 KB)
-    A/oh-dear → A (490 bytes)
-    t/self → t (112 bytes)
-
-81 results were filtered. Use top = number|false to show more results.
-```
+<image src="https://raw.githubusercontent.com/samcamwilliams/membuddy/refs/heads/main/example-output.png" alt="Example Output" />
 
 ## Additional Printing Options
 
