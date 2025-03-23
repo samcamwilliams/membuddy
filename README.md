@@ -9,17 +9,22 @@ including nested tables and detection of circular references.
 - Measure memory usage of individual variables or the entire global environment
 - Support for profiling to a specified depth, returning the total size of the
   table and the size of each nested table.
-- Detection and reporting of circular references.
+- Detection and reporting of circular references with size information.
+- Pretty-printed, colorized output with size formatting.
+- Filtering options to focus on the largest memory consumers.
 - Pure Lua implementation with no external dependencies.
 - Minimal (but non-zero!) memory overhead during profiling.
 
 Due to the lightweight nature of this tool, it provides a good approximation
 of memory usage, but is not a precise measurement. Additionally, it needs to
-duplicate (and then immediately `free') elements of the live environment in order
-to function leading to some memory overhead during profiling. It does not,
-however, cause any overhead during the normal course of operation of the
+duplicate (and then immediately `free') each element of the live environment in 
+to calculate their memory usage. This memory overhead should, however, be capped
+at the size of the largest element in the environment. After each object has its
+size measured, it is immediately freed.
+
+`Membuddy` does not cause any overhead during the normal course of operation of the
 process it is profiling. Further, it is also not necessary to have `membuddy`
-installed at the time of allocating the memory to be profiled: It can be added
+installed at the time of allocating the memory that it profiles: It can be added
 or removed at any time.
 
 ## Installation
@@ -41,87 +46,127 @@ APM.install("membuddy")
 
 ## Usage
 
-### Basic Usage
+There are two main ways to use `membuddy`:
+1. Profile and print results to the console.
+2. Profile and process the results programmatically yourself.
 
+Both methods accept the same options, which are as follows:
+
+- `target`: The table to profile (default: `_G`).
+- `max_depth`: Maximum depth to traverse (default: 3). Can be a number,
+  `math.huge`, "infinity", or "inf" to traverse all depths.
+- `min_size`: Minimum size in bytes to include (default: 1).
+- `top`: Maximum number of results to show (default: 20, use `false` for all).
+- `cycles`: Whether to detect circular references (default: true).
+
+In order to profile and print results to the console, you can use the following:
 ```lua
--- Profile all global variables with a max reporting depth of 3
-local results = membuddy.profile({depth = 3})
+-- Profile and directly print results with the default options.
+membuddy.print()
 
--- Print the results in a human-readable format
-membuddy.print_results(results)
+-- Profile and print results with custom options.
+membuddy.print({
+    target = table_to_profile,  -- Table to profile (default: _G)
+    max_depth = 5,              -- Maximum depth to traverse (default: 3)
+    min_size = 10,              -- Minimum byte size of objects to display (default: 1)
+    top = 10,                   -- Show only the top N results (default: 20).
+                                -- Can also be set to `false` to show all results.
+    cycles = true               -- Show circular reference findings (default: true)
+})
 ```
 
-### Profile a Specific Table
-
+If you would like to use the results from `membuddy` programmatically, you can
+do the following:
 ```lua
--- Profile a specific table with a max depth of 2
-local my_table = {a = {b = {c = {d = "deep"}}}, e = "shallow"}
-my_table.f = my_table
-local results = membuddy.profile(my_table, {depth = 2})
-```
-Results in...
-```lua
-results = {
-    totalSize = 1234567,  -- Total memory usage in bytes
-    sizes = {
-        -- Paths and their respective memory usage in bytes
-        ["a/b/..."] = 100,
-        ["a/e"] = 400
-    },
-    circular = {
-        -- Circular references detected during profiling
-        ["my_table"] = "my_table"
-    }
-}
-```
+-- Profile and return results. The options are the same as when printing results.
+local results = membuddy.profile({
+    target = table_to_profile,
+    max_depth = 5,
+})
+-- Returns:
+-- {
+--     type = "membuddy-results",
+--     totalSize = 1000.0,
+--     sizes = {
+--         ["path/to/object"] = 100,
+--     },
+--     totalSizes = {
+--         ["path/to/object"] = 100,
+--     },
+--     cycles = {
+--         ["path/to/object"] = "path/to/cycle",
+--     },
+-- }
 
-To print the results in a human-readable format, use:
-
-```lua
+-- Print results from previous profiling runs:
 membuddy.print(results)
 ```
-This should yield a result of the following form:
+
+## Example Output
+
+When calling `membuddy.print()`, you will see a report of the following form:
 ```lua
-Total size: 1234567 bytes
+   ===================== MEMBUDDY =====================
 
-Sizes:
-    a/b/...: 100 bytes
-    a/e: 400 bytes
+Analyzed a total of 206 references.
+Total memory utilized: 22.78 KB.
 
-Circular references:
-    my_table: my_table
+Memory usage by reference name:
+    package → 16.66 KB
+    package/loaded → 16.24 KB
+    Inbox → 4.49 KB
+    Inbox/1 → 4.43 KB
+    Inbox/1/TagArray/... → 3.27 KB
+    package/loaded/.crypto.init/... → 3.11 KB
+    package/loaded/.handlers/... → 2.67 KB
+    package/loaded/.crypto.cipher.init/... → 2.62 KB
+    package/loaded/.crypto.util.init/... → 2.62 KB
+    package/loaded/.ao/... → 2.61 KB
+    A → 490 bytes
+    Inbox/1/Tags/... → 328 bytes
+    A/D → 322 bytes
+    package/path → 175 bytes
+    package/loaded/io/... → 155 bytes
+    A/D/B → 154 bytes
+    t → 112 bytes
+    package/cpath → 93 bytes
+    Inbox/1/Module → 68 bytes
+    Inbox/1/Authority → 68 bytes
+...and 81 other references, totalling 4.49 KB.
+
+Found circular references (potentially retaining data unnecessarily):
+    _G: self-reference (22.83 KB)
+    package/loaded/_G: self-reference (22.83 KB)
+    package/loaded/package → package (16.66 KB)
+    A/oh-dear → A (490 bytes)
+    t/self → t (112 bytes)
+
+81 results were filtered. Use top = number|false to show more results.
 ```
 
-## API Reference
+## Additional Printing Options
 
-### membuddy.profile([table,] options)
+If you would like to disable printing the header on the report summary, you can
+do so by setting the `no_header` option to `true`:
+```lua
+membuddy.print({no_header = true})
+```
 
-Profiles the memory usage of a table.
+If you would like to disable the circular reference detection, you can do so by
+setting the `cycles` option to `false`:
+```lua
+membuddy.print({cycles = false})
+```
 
-- `table`: The table to profile. If not provided, the entire global environment
-  will be profiled.
-- `options`: A table of options
-  - `depth`: Maximum depth to traverse (optional)
-- **Returns**: Results table with memory usage information
+MemBuddy uses the AOS `Colors` table for output formatting:
 
-### membuddy.print([results])
+- Red: Used for large values (KB, MB, GB)
+- Green: Used for small values (bytes) and ellipsis
+- Blue: Used for path names
+- Gray: Used for labels and descriptions
 
-Prints profiling results.
-
-- `results`: The results table returned by `profile`. If not provided, a full
-  profile of the global environment will be printed.
-- **Prints**: The results in a human-readable format.
-
-### membuddy.format_size(bytes)
-
-Formats a byte count into a human-readable string.
-
-- `bytes`: Number of bytes
-- Returns: Formatted string (e.g., "1.23 MB")
-
-## Example
-
-See `src/example.lua` for a complete example of using the profiler.
+If you would like to use your own color scheme or disable colors, you can do so
+by setting the `Colors` table in your environment.
 
 ## License
 
