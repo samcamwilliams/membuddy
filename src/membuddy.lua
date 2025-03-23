@@ -50,17 +50,21 @@ local function measure_object_memory(obj)
 end
 
 -- Build a table of memory usage for each path
-local function build_memory_table(obj, path, max_depth, current_depth, visited, result, circular)
+local function build_memory_table(obj, path, max_depth, current_depth, visited, result, circular, total_sizes)
     visited = visited or {}
     result = result or {}
     circular = circular or {}
+    total_sizes = total_sizes or {}  -- Track total sizes including children
     path = path or ""
     current_depth = current_depth or 0
 
     -- Check for circular references
     if visited[obj] then
         circular[path] = visited[obj]
-        return 0
+        -- Estimate reference overhead (~ 8-16 bytes) instead of zero
+        local reference_overhead = measure_object_memory({})  -- Table pointer overhead
+        result[path] = reference_overhead
+        return reference_overhead
     end
 
     -- Register current object in visited map with its path
@@ -75,8 +79,6 @@ local function build_memory_table(obj, path, max_depth, current_depth, visited, 
     -- For tables, we need to decide based on depth
     if max_depth ~= nil and current_depth >= max_depth then
         -- We've reached max depth - measure the subtree efficiently
-        -- This approach traverses the deep structure without creating memory-intensive clones,
-        -- allowing accurate measurement of large data structures with minimal overhead
         local subtree_size = 0
         local subtree_visited = {}
 
@@ -107,36 +109,39 @@ local function build_memory_table(obj, path, max_depth, current_depth, visited, 
         return subtree_size
     end
 
-    -- For tables within depth limit, measure each child
-    local total_size = 0
-
-    -- First measure the empty table itself
+    -- First measure the empty table itself (table overhead)
     local empty_table = {}
     local table_overhead = measure_object_memory(empty_table)
-    total_size = table_overhead
-
-    -- Add the table overhead to results
-    if path ~= "" then
-        result[path] = table_overhead
-    end
-
+    
+    -- Initialize total size for this table
+    local this_table_total_size = table_overhead
+    
     -- Then measure each key-value pair
     for k, v in pairs(obj) do
         local key_str = tostring(k)
         local new_path = path ~= "" and (path .. "/" .. key_str) or key_str
+        
         -- Recurse for each value
         local child_size = build_memory_table(
             v, new_path, max_depth,
-            current_depth + 1, visited, result, circular
+            current_depth + 1, visited, result, circular, total_sizes
         )
-        total_size = total_size + child_size
+        
+        -- Add child size to this table's total
+        this_table_total_size = this_table_total_size + child_size
     end
-
-    return total_size
+    
+    -- Record both the table overhead for this specific path
+    result[path] = table_overhead
+    
+    -- Also track the total size including children
+    total_sizes[path] = this_table_total_size
+    
+    return this_table_total_size
 end
 
 -- Format the results for better readability
-local function postprocess_results(memory_table, cycles)
+local function postprocess_results(memory_table, cycles, total_sizes)
     local sizes = {}
     local total_size = 0
 
@@ -148,6 +153,7 @@ local function postprocess_results(memory_table, cycles)
     return {
         totalSize = total_size,
         sizes = sizes,
+        totalSizes = total_sizes or {}, -- Include total sizes with children
         cycles = cycles
     }
 end
@@ -161,11 +167,12 @@ function membuddy.profile(options)
     
     local memory_table = {}
     local circular = {}
+    local total_sizes = {}  -- Track total sizes including children
     
     -- Only track circular references if find_cycles is not explicitly false
     local cycles_to_track = (find_cycles ~= false) and circular or {}
     
-    local total = build_memory_table(target, "", max_depth, 0, {}, memory_table, cycles_to_track)
+    local total = build_memory_table(target, "", max_depth, 0, {}, memory_table, cycles_to_track, total_sizes)
     
     -- Format human readable sizes
     local formatted = {}
@@ -176,7 +183,7 @@ function membuddy.profile(options)
         end
     end
     
-    return postprocess_results(formatted, cycles_to_track)
+    return postprocess_results(formatted, cycles_to_track, total_sizes)
 end
 
 -- Format number of bytes to human readable string
@@ -237,7 +244,12 @@ function membuddy.print(options)
     local paths = {}
     for path, size in pairs(results.sizes) do
         if size >= min_size then
-            table.insert(paths, {path = path, size = size})
+            -- Use total size if available for better sorting
+            local display_size = size
+            if results.totalSizes[path] then
+                display_size = results.totalSizes[path]
+            end
+            table.insert(paths, {path = path, size = display_size})
         end
     end
     table.sort(paths, function(a, b) return a.size > b.size end)
@@ -262,14 +274,18 @@ function membuddy.print(options)
     -- Print each displayed path with colorized ellipsis
     for i = 1, display_count do
         local item = paths[i]
-        -- Check if path contains "..." and colorize it
+        -- Check if path ends with "..." and colorize it correctly
         local display_path = item.path
-        local ellipsis_pos = display_path:find("/%.%.%.$") or display_path:find("^%.%.%.$")
+        local ellipsis_pos = display_path:find("/%.%.%.$")
         
         if ellipsis_pos then
-            local base_path = display_path:sub(1, ellipsis_pos - 1)
-            display_path = C.blue .. base_path .. C.reset .. C.green .. 
-                          display_path:sub(ellipsis_pos) .. C.gray
+            -- Path ends with "/..."
+            local base_path = display_path:sub(1, ellipsis_pos - 1)  -- Don't include the slash
+            display_path = C.blue .. base_path .. C.reset .. C.gray .. "/" .. 
+                          C.green .. "..." .. C.gray
+        elseif display_path == "..." then
+            -- Just ellipsis
+            display_path = C.green .. display_path .. C.gray
         else
             display_path = C.blue .. display_path .. C.gray
         end
@@ -301,30 +317,37 @@ function membuddy.print(options)
         local cycles = {}
         
         for path, target in pairs(results.cycles) do
-            -- Get the size associated with this path (approximation)
-            local size = results.sizes[path] or 0
-            
-            -- Create a more informative message
-            local msg
-            if target == "" then
-                msg = string.format("    %s%s%s: %sself-reference%s (%s)", 
-                    C.blue, path, C.reset,
-                    C.gray, C.reset,
-                    membuddy.format_size(size, true))
-            elseif target == path then
-                msg = string.format("    %s%s%s: %sdirect self-reference%s (%s)", 
-                    C.blue, path, C.reset,
-                    C.gray, C.reset,
-                    membuddy.format_size(size, true))
-            else
-                msg = string.format("    %s%s%s %s→%s %s%s%s (%s)", 
-                    C.blue, path, C.reset,
-                    C.gray, C.reset,
-                    C.green, target, C.reset,
-                    membuddy.format_size(size, true))
+            -- Get the target size
+            local target_size = 0
+            if results.totalSizes[target] then
+                target_size = results.totalSizes[target]
             end
             
-            table.insert(cycles, {message = msg, size = size})
+            -- Skip zero-byte targets (likely C modules we can't measure)
+            if target_size > 0 then
+                -- Create a more informative message
+                local msg
+                if target == "" then
+                    msg = string.format("    %s%s%s: %sself-reference%s (%s)", 
+                        C.blue, path, C.reset,
+                        C.gray, C.reset,
+                        membuddy.format_size(target_size, true))
+                elseif target == path then
+                    msg = string.format("    %s%s%s: %sdirect self-reference%s (%s)", 
+                        C.blue, path, C.reset,
+                        C.gray, C.reset,
+                        membuddy.format_size(target_size, true))
+                else
+                    -- Just show the referenced object size
+                    msg = string.format("    %s%s%s %s→%s %s%s%s (%s)", 
+                        C.blue, path, C.reset,
+                        C.gray, C.reset,
+                        C.green, target, C.reset,
+                        membuddy.format_size(target_size, true))
+                end
+                
+                table.insert(cycles, {message = msg, size = target_size})
+            end
         end
         
         -- Sort by size to highlight the largest circular references
@@ -345,19 +368,24 @@ function membuddy.print(options)
         end
         
         -- Print circular references
-        for i = 1, cycle_display_count do
-            print(cycles[i].message)
-        end
-        
-        -- Show message about hidden cycles if any
-        if hidden_cycles > 0 then
-            print(string.format("%s...and %s%d%s other circular references, totalling %s.%s", 
-                C.gray, 
-                C.blue, 
-                hidden_cycles, 
-                C.gray, 
-                membuddy.format_size(hidden_cycles_total, true),
-                C.reset))
+        if #cycles > 0 then
+            for i = 1, cycle_display_count do
+                print(cycles[i].message)
+            end
+            
+            -- Show message about hidden cycles if any
+            if hidden_cycles > 0 then
+                print(string.format("%s...and %s%d%s other circular references, totalling %s.%s", 
+                    C.gray, 
+                    C.blue, 
+                    hidden_cycles, 
+                    C.gray, 
+                    membuddy.format_size(hidden_cycles_total, true),
+                    C.reset))
+            end
+        else
+            print(string.format("    %sNo significant circular references found%s", 
+                C.gray, C.reset))
         end
     end
     
