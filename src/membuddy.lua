@@ -154,7 +154,8 @@ local function postprocess_results(memory_table, cycles, total_sizes)
         totalSize = total_size,
         sizes = sizes,
         totalSizes = total_sizes or {}, -- Include total sizes with children
-        cycles = cycles
+        cycles = cycles,
+        type = "membuddy-results"
     }
 end
 
@@ -163,11 +164,21 @@ function membuddy.profile(options)
     options = options or {}
     local target = options.target or _G
     local find_cycles = options.cycles or true
-    local max_depth = options.max_depth or 3
+    
+    -- Handle infinity values for max_depth
+    local max_depth = options.max_depth
+    if max_depth == nil then
+        max_depth = 3  -- Default
+    elseif max_depth == math.huge or 
+           (type(max_depth) == "string" and 
+           (string.lower(max_depth) == "infinity" or 
+            string.lower(max_depth) == "inf")) then
+        max_depth = nil  -- nil represents no depth limit in our traversal code
+    end
     
     local memory_table = {}
     local circular = {}
-    local total_sizes = {}  -- Track total sizes including children
+    local total_sizes = {}
     
     -- Only track circular references if find_cycles is not explicitly false
     local cycles_to_track = (find_cycles ~= false) and circular or {}
@@ -223,10 +234,29 @@ function membuddy.format_size(bytes, use_colors)
     return num_part .. " " .. units[unit_index]
 end
 
+local function count_entries(t)
+    local count = 0
+    for _ in pairs(t) do count = count + 1 end
+    return count
+end
+
 -- Pretty print the results with color
-function membuddy.print(options)
-    options = options or {}
-    local results = membuddy.profile(options)
+function membuddy.print(optionsOrResults)
+    local options = optionsOrResults or {}
+    local results
+    -- If the user has already provided us with a results table, we use that.
+    -- Else, we profile the given `target` (or _G by default) and return format
+    -- the results on the console.
+    if options.type and options.type == "membuddy-results" then
+        results = optionsOrResults
+        options = {
+            min_size = options.min_size or 1,
+            top = options.top or false,
+            cycles = options.cycles or true
+        }
+    else
+        results = membuddy.profile(options)
+    end
     local min_size = options.min_size or 1  -- Default: filter anything below 1 byte
     local top = options.top
     if top == nil then top = 20 end  -- Default: show top 20 results
@@ -236,8 +266,17 @@ function membuddy.print(options)
         reset = "", green = "", red = "", gray = "", blue = ""
     }
     
+    if options.no_header ~= true then
+        print(C.blue .. "   ===================== " ..
+                C.red .. "MEM" .. C.green .. "BUDDY" .. C.gray ..
+                C.blue .. " =====================" .. C.reset)
+    end
+
+    local total_results = count_entries(results.sizes) + count_entries(results.cycles)
+    print(C.gray .. "\nAnalyzed a total of " .. C.green .. total_results .. C.gray ..
+          " references." .. C.reset)
     print(C.gray .. "Total memory utilized" .. C.gray .. ": " .. 
-          membuddy.format_size(results.totalSize, true) .. "\n")
+          membuddy.format_size(results.totalSize, true) .. ".\n")
     
     print(C.gray .. "Memory usage by reference name:" .. C.reset)
     -- Sort and filter paths by size
@@ -299,7 +338,7 @@ function membuddy.print(options)
     if hidden_paths > 0 then
         print(string.format("%s...and %s%d%s other references, totalling %s.%s", 
             C.gray, 
-            C.blue, 
+            C.green, 
             hidden_paths, 
             C.gray, 
             membuddy.format_size(hidden_total, true),
@@ -377,7 +416,7 @@ function membuddy.print(options)
             if hidden_cycles > 0 then
                 print(string.format("%s...and %s%d%s other circular references, totalling %s.%s", 
                     C.gray, 
-                    C.blue, 
+                    C.green, 
                     hidden_cycles, 
                     C.gray, 
                     membuddy.format_size(hidden_cycles_total, true),
