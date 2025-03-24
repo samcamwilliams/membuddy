@@ -31,21 +31,16 @@ or removed at any time.
 
 ## Installation
 
-Simply copy the `membuddy.lua` file to your project or Lua path.
-
-```lua
-local membuddy = require("membuddy")
-```
-
-Alternatively, you can load the module into AOS using the `apm` package manager:
+Simply clone this repository, start AOS with your intended process, and load
+the `membuddy` module:
 
 ```bash
+git clone https://github.com/samcamwilliams/membuddy.git
+cd membuddy
 aos [your-process-name]
 
-.load-blueprint apm
-APM.install("membuddy")
+.load src/membuddy.lua
 ```
-
 
 ## Example Output
 
