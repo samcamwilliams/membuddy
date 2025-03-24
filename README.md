@@ -1,3 +1,5 @@
+<image src="https://raw.githubusercontent.com/samcamwilliams/membuddy/refs/heads/main/banner.png" alt="MemBuddy Banner" />
+
 # MemBuddy: A simple memory profiler for AOS.
 
 A pure Lua module for measuring memory usage of variables and data structures
